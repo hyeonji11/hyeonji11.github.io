@@ -1,0 +1,169 @@
+---
+title: Kubernetes Architecture
+author: hj
+date: 2022-08-30 19:40:00 +0800
+categories: [Kubernetes, Kubernetes Architecture]
+tags: [k8s, kubernetes, k8s architecture]
+render_with_liquid: false
+---
+
+오늘은 회사에서 쿠버네티스 관련된 일을 맡게 되어서 공부하면서 정리한 내용들을 공유할 예정이다.
+
+정리한 내용은 쿠버네티스 공식 문서와 유튜브의 아키텍처 영상을 보고 정리했다.
+
+---
+**참고**
+[https://kubernetes.io/ko/docs/concepts/overview/what-is-kubernetes/](https://kubernetes.io/ko/docs/concepts/overview/what-is-kubernetes/)
+[https://www.youtube.com/watch?v=SNA1sSNlmy0](https://www.youtube.com/watch?v=SNA1sSNlmy0)
+---
+
+# Kubernetes Architecture
+### 구성/설계
+
+1. 상태  체크<br/>
+   현재 상태가 원하는 상태(Desired state)가 맞는지 체크
+2. 차이점 발견<br/>
+   현재 상태와 원하는 상태가 다름
+
+3. 조치<br/>
+   현재 상태를 원하는 상태로 만들기 위해 조치하기
+
+1~3번을 계속 돌면서 실행
+
+**예시**
+
+원하는 상태(Desired state) : 컨테이너 1개
+
+현재 상태 : 컨테이너 0개
+
+⇒ **상태 체크**(1) 후 컨테이너 1개 **차이를 발견**(2)하고 컨테이너를 띄우는 **조치 실행**(3)
+
+<br/>
+여기서 상태 체크를 Controller가 하는데 컨테이너 상태만 체크하는 controller가 있을 수 있고, namespace만 체크하는 controller가 있을수도 있음(custom도 가능)
+
+모든 controller는 위의 1~3번을 해서 disired state를 체크하는 controller가 됨
+
+scheduler는 컨테이너 요청이 오면 어떤 서버에 띄울지 체크
+
+위의 체크하고 실행하는 부분(controller, scheduler)은 master라고 하고 컨테이너가 실행되는 부분은 node라고 한다.
+
+controller, scheduler들과 통신하는 역할은 API server
+
+상태를 저장하고 조회할 수 있는 역할은 etcd
+
+밑에 그림은 이 설명에 대한 그림이고, 유튜브에서 캡처한 사진이다. 더 자세한 설명은 밑에 적어놨다.
+
+![k8s_architecture](/assets/img/k8s_arch.png)
+
+---
+
+### Master
+
+####etcd
+
+모든 상태와 데이터를 저장
+
+분산 시스템으로 구성하여 안전성을 높임
+
+key-value 형태로 데이터 저장
+
+<br/>
+
+####API server
+
+상태를 바꾸거나 조회
+
+etcd와 유일하게 통신하는 모듈
+⇒ 다른 컴포넌트가 etcd에 직접 조회하지 않고 API server를 통해서 조회함
+
+REST API 형태로 제공
+
+내부에 있는 컨트롤러와 통신
+
+요청이 많기 때문에 수평으로 확장 가능하도록 디자인
+
+<br/>
+
+####Scheduler
+
+새로 생성된 Pod가 있는지 감시하고, 어떤 노드에 실행할지 선택하는 역할
+
+노드의 현재 상태와 Pod의 요구사항을 체크
+⇒ 아마존 같은 경우 a-zone, b-zone에 있는 노드 이런식으로 라벨 붙여서 pod를 띄울 때 특정 라벨에 해당하는 노드에 배포하거나 요청
+
+<br/>
+
+####Controller
+
+논리적으로 다양한 컨트롤러가 존재
+
+끊임 없이 상태를 체크하고 원하는 상태를 유지
+
+논리적으로 다양하게 쪼개져 있지만 복잡성을 낮추기 위해 단일 프로세스로 실행
+
+---
+**조회 흐름**
+
+1. 정보 조회 Controller → API Server
+2. 정보 조회 권한 체크 API Server
+3. 정보 조회 API Server → etcd
+
+<br/>
+
+**기본흐름**
+
+1. 원하는 상태 변경 etcd → API Server
+2. 원하는 상태 변경 API Server → Controller
+3. 원하는 상태로 리소스 변경 Controller
+4. 변경 사항 전달 Controller → API Server
+5. 정보 갱신 권한 체크 API Server
+6. 정보 갱신 API Server → etcd
+
+---
+
+### Node
+
+Proxy, Kubelet 두개의 컴포넌트가 있음
+
+Proxy와 Kubelet도 master와 통신을 할 때 API Server와 통신
+
+<br/>
+
+####Kubelet
+
+직접 Pod와 통신
+
+각 노드에서 실행
+
+Pod을 실행/중지하고 상태를 체크
+
+
+<br/>
+
+####proxy
+
+네트워크 프록시와 부하 분산 역할
+
+---
+
+**Pod이 하나 생성되기 위한 과정**
+
+1. 관리자가 API Server로 Pod 생성 요청
+2. API Server → etcd : pod 생성 요청이 들어왔다는 정보를 저장
+3. Controller는 새로 생긴 pod이 있는지 계속 체크하는 중에 생성 요청이 들어온 것을 발견
+4. Controller → API Server : 실제 pod 할당 요청
+5. API Server → etcd : pod 할당 요청으로 상태 변경
+6. Scheduler는 계속 새로 할당 요청이 들어온 pod이 있는지 체크하던 중 발견
+7. 특정 노드에 새로운 Pod 할당
+8. API Server는 그걸 받아서 etcd에 특정 노드에 pod를 할당하는데 아직 실행 전이라고 상태 변경
+9. Kubelet이 내 노드에 할당된 pod 중에서 실행되지 않은게 있는지 계속 체크하다가 발견
+10. Kubelet이 pod 생성
+11. API Server → etcd : 노드에 pod 할당 완료했고, 실행중이라고 상태 변경
+
+---
+이번에 정리한 내용은 Pod이 생성되기 위한 과정을 알기 위한게 주요 포인트였다. 이 글을 읽기 전에 쿠버네티스 공식 문서에서 container나 pod,
+namespace같은 기본 개념들을 읽어보고 아키텍처 공부를 하면 더 이해가 잘 될거라고 생각한다.
+
+개인적으로는 쿠버네티스에 대해 처음 공부하면서 개념이 생소한 것들이 많아서
+공식문서만으로는 공부하기 힘들었지만 유튜브로 아키텍처 설명을 들으면서
+같이 공부하니까 더 쉽게 이해가 됐다.
